@@ -1602,6 +1602,8 @@ void garbageCollect(MemoryState* state, bool force) {
 
   state->gcInProgress = true;
 
+  cyclicLocalGC();
+
   incrementStack(state);
   processDecrements(state);
   size_t beforeDecrements = state->toRelease->size();
@@ -3194,9 +3196,9 @@ void GC_UnregisterWorker(void* worker) {
   cyclicRemoveWorker(worker);
 }
 
-void GC_RendezvouzCallback(void* worker) {
+void GC_CollectorCallback(void* worker) {
   if (g_hasCyclicCollector)
-    cyclicRendezvouz(worker);
+    cyclicCollectorCallback(worker);
 }
 
 KBoolean Kotlin_native_internal_GC_getCyclicCollector() {

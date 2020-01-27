@@ -4,14 +4,20 @@
  */
 package org.jetbrains.kotlin.backend.konan.ir.interop
 
+import org.jetbrains.kotlin.backend.konan.descriptors.findPackage
 import org.jetbrains.kotlin.backend.konan.descriptors.isFromInteropLibrary
+import org.jetbrains.kotlin.backend.konan.isObjCClass
 import org.jetbrains.kotlin.descriptors.CallableMemberDescriptor
+import org.jetbrains.kotlin.descriptors.ClassDescriptor
 import org.jetbrains.kotlin.descriptors.DeclarationDescriptor
+import org.jetbrains.kotlin.descriptors.PackageFragmentDescriptor
 import org.jetbrains.kotlin.ir.UNDEFINED_OFFSET
 import org.jetbrains.kotlin.ir.declarations.*
+import org.jetbrains.kotlin.ir.declarations.impl.IrFileImpl
 import org.jetbrains.kotlin.ir.declarations.lazy.*
 import org.jetbrains.kotlin.ir.symbols.*
 import org.jetbrains.kotlin.ir.util.*
+import org.jetbrains.kotlin.resolve.descriptorUtil.getAllSuperClassifiers
 import org.jetbrains.kotlin.resolve.descriptorUtil.module
 
 /**
@@ -24,6 +30,20 @@ class IrProviderForInteropStubs(
 ) : LazyIrProvider {
 
     override lateinit var declarationStubGenerator: DeclarationStubGenerator
+
+    // We need to collect provided Objective-C classes to be able to generate RTTI for them.
+    // TODO: Unify with BuiltInFictitiousFunctionIrClassFactory?
+    private val filesMap = mutableMapOf<PackageFragmentDescriptor, IrFile>()
+
+    var module: IrModuleFragment? = null
+        set(value) {
+            if (value == null)
+                error("Provide a valid non-null module")
+            if (field != null)
+                error("Module has already been set")
+            field = value
+            value.files += filesMap.values
+        }
 
     override fun getDeclaration(symbol: IrSymbol): IrLazyDeclarationBase? =
             when {
@@ -41,10 +61,38 @@ class IrProviderForInteropStubs(
         is IrSimpleFunctionSymbol -> provideIrFunction(symbol)
         is IrPropertySymbol -> provideIrProperty(symbol)
         is IrTypeAliasSymbol -> provideIrTypeAlias(symbol)
-        is IrClassSymbol -> provideIrClass(symbol)
+        is IrClassSymbol -> provideIrClass(symbol).also {
+            // We need to use extension for a descriptor because IR-based function involves
+            // LazyTable referencing.
+            if (it.descriptor.isObjCClass()) collectObjCClasses(it)
+        }
         is IrConstructorSymbol -> provideIrConstructor(symbol)
         is IrFieldSymbol -> provideIrField(symbol)
         else -> error("Unsupported interop declaration: symbol=$symbol, descriptor=${symbol.descriptor}")
+    }
+
+    private fun referenceSuperClassifiers(descriptor: ClassDescriptor) {
+        val symbolTable = declarationStubGenerator.symbolTable
+        descriptor.getAllSuperClassifiers().forEach { symbolTable.referenceClassifier(it) }
+    }
+
+    private fun collectObjCClasses(klass: IrClass) {
+        val descriptor = klass.descriptor
+        // Force-load types to be able to generate RTTI for the given class.
+        // We do it via descriptors and symbolTable to avoid creating of unnecessary and incorrect lazy classes.
+        referenceSuperClassifiers(descriptor)
+        descriptor.companionObjectDescriptor?.let { referenceSuperClassifiers(it) }
+        // RTTI for companions will be generated when we recursively visit their parents in RTTIGenerator.
+        if (!descriptor.isCompanionObject) {
+            val packageFragmentDescriptor = descriptor.findPackage()
+            val file = filesMap.getOrPut(packageFragmentDescriptor) {
+                IrFileImpl(NaiveSourceBasedFileEntryImpl("ObjCClasses"), packageFragmentDescriptor).also {
+                    this.module?.files?.add(it)
+                }
+            }
+            klass.parent = file
+            file.declarations += klass
+        }
     }
 
     private fun provideIrFunction(symbol: IrSimpleFunctionSymbol): IrLazyFunction {

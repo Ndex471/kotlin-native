@@ -233,6 +233,8 @@ internal val psiToIrPhase = konanUnitPhase(
             irModules = deserializer.modules.filterValues { llvmModuleSpecification.containsModule(it) }
             ir.symbols = symbols
 
+            irProviderForInteropStubs.module = irModule!!
+
             functionIrClassFactory.module =
                     (listOf(irModule!!) + deserializer.modules.values)
                             .single { it.descriptor.isKonanStdlib() }

@@ -17,6 +17,7 @@ import org.jetbrains.kotlin.ir.IrStatement
 import org.jetbrains.kotlin.ir.builders.irDelegatingConstructorCall
 import org.jetbrains.kotlin.ir.declarations.*
 import org.jetbrains.kotlin.ir.declarations.impl.IrFunctionImpl
+import org.jetbrains.kotlin.ir.declarations.lazy.IrLazyClass
 import org.jetbrains.kotlin.ir.descriptors.WrappedSimpleFunctionDescriptor
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.expressions.impl.*
@@ -35,7 +36,7 @@ internal class InitializersLowering(val context: CommonBackendContext) : ClassLo
     object DECLARATION_ORIGIN_ANONYMOUS_INITIALIZER : IrDeclarationOriginImpl("ANONYMOUS_INITIALIZER")
 
     override fun lower(irClass: IrClass) {
-        if (irClass.isInterface) return
+        if (irClass.isInterface || irClass is IrLazyClass) return
         InitializersTransformer(irClass).lowerInitializers()
     }
 

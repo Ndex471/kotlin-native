@@ -19,6 +19,8 @@ import org.jetbrains.kotlin.backend.konan.llvm.functionName
 import org.jetbrains.kotlin.backend.konan.llvm.localHash
 import org.jetbrains.kotlin.ir.IrElement
 import org.jetbrains.kotlin.ir.declarations.*
+import org.jetbrains.kotlin.ir.declarations.lazy.IrLazyClass
+import org.jetbrains.kotlin.ir.declarations.lazy.IrLazyConstructor
 import org.jetbrains.kotlin.ir.expressions.*
 import org.jetbrains.kotlin.ir.expressions.impl.*
 import org.jetbrains.kotlin.ir.symbols.IrClassSymbol
@@ -200,8 +202,10 @@ internal class ModuleDFGBuilder(val context: Context, val irModule: IrModuleFrag
 
             override fun visitConstructor(declaration: IrConstructor) {
                 val body = declaration.body
-                assert (body != null || declaration.constructedClass.isNonGeneratedAnnotation()) {
-                    "Non-annotation class constructor has empty body"
+                assert (body != null
+                        || declaration.constructedClass.isNonGeneratedAnnotation()
+                        || declaration is IrLazyConstructor) {
+                    "Non-annotation, non-lazy class constructor has empty body"
                 }
                 DEBUG_OUTPUT(0) {
                     println("Analysing function ${declaration.descriptor}")
@@ -579,9 +583,15 @@ internal class ModuleDFGBuilder(val context: Context, val irModule: IrModuleFrag
 
                             is IrGetObjectValue -> DataFlowIR.Node.Singleton(
                                     symbolTable.mapType(value.type),
-                                    if (value.type.isNothing()) // <Nothing> is not a singleton though its instance is get with <IrGetObject> operation.
+                                    if (value.type.isNothing()) { // <Nothing> is not a singleton though its instance is get with <IrGetObject> operation.
                                         null
-                                    else symbolTable.mapFunction(value.symbol.owner.constructors.single())
+                                    } else {
+                                        val owner = value.symbol.owner
+                                        // Companion object constructor is private and is not listed for LazyIr.
+                                        if (owner is IrLazyClass && owner.isCompanion) null
+                                        else symbolTable.mapFunction(owner.constructors.single())
+                                    }
+
                             )
 
                             is IrConstructorCall -> {
